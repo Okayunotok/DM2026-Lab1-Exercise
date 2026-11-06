@@ -35,3 +35,50 @@ def test_build_dtm_tool_known_answer_4():
 
     # 6. Assert fitted CountVectorizer artifact is saved in session.artifacts
     assert "count_vectorizer" in session.artifacts, "'count_vectorizer' missing from session.artifacts."
+
+
+def test_term_frequency_tool_known_answer_14():
+    # 1. Each test creates its own fresh session & builds tools
+    session = SessionState()
+    premade_tools, _ = load_workspace_tools("premade_tools", session)
+    load_dataset_tool = next(t for t in premade_tools if t.name == "load_dataset_tool")
+
+    load_dataset_tool.invoke({
+        "file_path": "agent_dev/sample_fixture.csv",
+        "text_column": "text",
+        "label_column": "label"
+    })
+
+    tools = make_tools(session)
+    build_dtm_tool = next(t for t in tools if t.name == "build_dtm_tool")
+    term_frequency_tool = next(t for t in tools if t.name == "term_frequency_tool")
+
+    # Build document-term matrix first
+    build_dtm_tool.invoke({})
+
+    # 2. Invoke term_frequency_tool
+    result = term_frequency_tool.invoke({"top_k": 20})
+
+    # 3. Check summary frequencies matching Known Answer #14
+    expected_frequencies = {
+        "alpha": 6,
+        "always": 7,
+        "beta": 3,
+        "delta": 4,
+        "gamma": 7,
+    }
+    top_terms = result["top_terms"]
+    actual_frequencies = {item["term"]: item["frequency"] for item in top_terms}
+    assert actual_frequencies == expected_frequencies, f"Expected frequencies {expected_frequencies}, got {actual_frequencies}"
+
+    # 4. Check that full_report was stored in session.results_store and tie-breaking is alphabetical
+    res_id = result["result_id"]
+    stored_result = session.results_store[res_id]
+    full_report = stored_result["full_report"]
+
+    # In full_report, terms with frequency 7 are "always" and "gamma".
+    # Alphabetical tie-breaking requires "always" before "gamma".
+    terms_order = full_report["term"].tolist()
+    always_idx = terms_order.index("always")
+    gamma_idx = terms_order.index("gamma")
+    assert always_idx < gamma_idx, f"Expected 'always' before 'gamma' due to alphabetical tie-breaking, got order: {terms_order}"

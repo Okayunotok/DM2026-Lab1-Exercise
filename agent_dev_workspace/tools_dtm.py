@@ -1,4 +1,5 @@
 from typing import List, Optional
+import numpy as np
 import pandas as pd
 from sklearn.feature_extraction.text import CountVectorizer
 from langchain_core.tools import tool
@@ -105,4 +106,59 @@ def make_tools(session):
 
         return summary
 
-    return [build_dtm_tool]
+    @tool
+    def term_frequency_tool(top_k: int = 20) -> dict:
+        """Aggregates term frequencies across all documents in the document-term matrix.
+
+        Sums columns of session.feature_matrix to calculate total occurrences for each term,
+        sorts them in descending order of frequency (and alphabetically by term for tie-breaking),
+        and returns the top-K terms summary as well as storing full_report for visualization.
+
+        Args:
+            top_k: Number of top most frequent terms to return in the summary (default: 20).
+
+        Returns:
+            Dict containing result_id, top_terms list, total_terms count, and total_occurrences.
+        """
+        if session.feature_matrix is None or session.feature_names is None:
+            return {"error": "No document-term matrix found. Run build_dtm_tool first."}
+
+        # Sum total counts per column (term) across all documents (rows)
+        frequencies = np.asarray(session.feature_matrix.sum(axis=0)).ravel()
+
+        # Build DataFrame for full report
+        df_report = pd.DataFrame({
+            "term": session.feature_names,
+            "frequency": frequencies
+        })
+
+        # Sort by frequency descending, then by term ascending for deterministic tie-breaking
+        df_report = df_report.sort_values(
+            by=["frequency", "term"],
+            ascending=[False, True]
+        ).reset_index(drop=True)
+
+        # Slice top-K for summary report
+        df_top = df_report.head(top_k)
+        top_terms = df_top.to_dict(orient="records")
+
+        result_id = session.next_result_id("term_frequency")
+
+        summary = {
+            "result_id": result_id,
+            "total_terms": len(session.feature_names),
+            "total_occurrences": int(frequencies.sum()),
+            "top_terms": top_terms,
+        }
+
+        # Store result with full_report for visualize_result_tool
+        session.store_result(
+            "term_frequency_tool",
+            {"top_k": top_k},
+            summary,
+            full_report=df_report,
+        )
+
+        return summary
+
+    return [build_dtm_tool, term_frequency_tool]

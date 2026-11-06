@@ -1,5 +1,7 @@
 from typing import Literal
+import matplotlib.pyplot as plt
 import pandas as pd
+import seaborn as sns
 from langchain_core.tools import tool
 
 
@@ -182,4 +184,85 @@ def make_tools(session):
         session.store_result("inspect_data_tool", {"n": n, "mode": mode}, summary)
         return summary
 
-    return [check_missing_tool, check_duplicates_tool, inspect_data_tool]
+    @tool
+    def describe_data_tool(text_column: str = "text") -> dict:
+        """Computes text length statistics and creates a box plot grouped by category.
+
+        Calculates character length per document using text.apply(len), computes overall and
+        per-category summary statistics (count, mean, std, min, 25%, 50%, 75%, max),
+        and sets session.pending_figure to a box plot visualization.
+
+        Args:
+            text_column: Name of the column containing document text (default: 'text').
+
+        Returns:
+            Dict containing result_id, overall_stats, and per_category_stats.
+        """
+        df = session.dataframe
+        if df is None:
+            return {"error": "No dataset loaded in session. Please load a dataset first."}
+
+        if text_column not in df.columns:
+            return {"error": f"Column '{text_column}' not found in dataset."}
+
+        # Calculate text character length per document
+        text_lengths = df[text_column].fillna("").astype(str).apply(len)
+
+        # Helper to format .describe() series into a clean serializable dictionary
+        def format_describe(series: pd.Series) -> dict:
+            desc = series.describe()
+            return {
+                "count": int(desc["count"]),
+                "mean": round(float(desc["mean"]), 4),
+                "std": round(float(desc["std"]), 4) if not pd.isna(desc["std"]) else 0.0,
+                "min": float(desc["min"]),
+                "25%": float(desc["25%"]),
+                "50%": float(desc["50%"]),
+                "75%": float(desc["75%"]),
+                "max": float(desc["max"]),
+            }
+
+        overall_stats = format_describe(text_lengths)
+
+        # Categorical statistics breakdown
+        cat_col = "category_name" if "category_name" in df.columns else ("category" if "category" in df.columns else None)
+        per_category_stats = {}
+
+        if cat_col:
+            df_temp = pd.DataFrame({
+                "text_length": text_lengths,
+                "category": df[cat_col]
+            })
+            for cat, group in df_temp.groupby("category"):
+                per_category_stats[str(cat)] = format_describe(group["text_length"])
+
+        # Construct box plot visualization
+        fig, ax = plt.subplots(figsize=(8, 5))
+        if cat_col:
+            df_plot = pd.DataFrame({
+                "text_length": text_lengths,
+                "category": df[cat_col]
+            })
+            sns.boxplot(data=df_plot, x="category", y="text_length", ax=ax)
+            ax.set_xlabel("Category")
+        else:
+            sns.boxplot(y=text_lengths, ax=ax)
+
+        ax.set_ylabel("Text Length (characters)")
+        ax.set_title("Text Length Distribution by Category")
+        plt.tight_layout()
+
+        session.pending_figure = fig
+
+        result_id = session.next_result_id("describe_data")
+
+        summary = {
+            "result_id": result_id,
+            "overall_stats": overall_stats,
+            "per_category_stats": per_category_stats,
+        }
+
+        session.store_result("describe_data_tool", {"text_column": text_column}, summary)
+        return summary
+
+    return [check_missing_tool, check_duplicates_tool, inspect_data_tool, describe_data_tool]

@@ -112,3 +112,46 @@ def test_inspect_data_tool_head():
     first_row = result["sample_rows"][0]
     assert first_row["text"] == "always alpha alpha alpha beta", f"Expected first row text 'always alpha alpha alpha beta', got {first_row['text']}"
     assert first_row["category_name"] == "catA", f"Expected first row category_name 'catA', got {first_row['category_name']}"
+
+
+def test_describe_data_tool_known_answer_18():
+    # 1. Initialize fresh session & build tools
+    session = SessionState()
+    premade_tools, _ = load_workspace_tools("premade_tools", session)
+    load_dataset_tool = next(t for t in premade_tools if t.name == "load_dataset_tool")
+
+    load_dataset_tool.invoke({
+        "file_path": "agent_dev/sample_fixture.csv",
+        "text_column": "text",
+        "label_column": "label"
+    })
+
+    tools = make_tools(session)
+    describe_data_tool = next(t for t in tools if t.name == "describe_data_tool")
+
+    # 2. Invoke describe_data_tool
+    result = describe_data_tool.invoke({"text_column": "text"})
+
+    # 3. Assert overall statistics matching Known Answer #18
+    overall = result["overall_stats"]
+    assert overall["count"] == 8, f"Expected count to be 8, got {overall['count']}"
+    assert pytest.approx(overall["mean"], abs=1e-3) == 19.875, f"Expected overall mean 19.875, got {overall['mean']}"
+    assert pytest.approx(overall["std"], abs=1e-3) == 9.4330, f"Expected overall std 9.4330, got {overall['std']}"
+
+    # 4. Assert per-category statistics matching Known Answer #18
+    per_cat = result["per_category_stats"]
+    assert "catA" in per_cat and "catB" in per_cat, f"Expected categories 'catA' and 'catB', got {list(per_cat.keys())}"
+
+    catA = per_cat["catA"]
+    assert pytest.approx(catA["mean"], abs=1e-3) == 17.25, f"Expected catA mean 17.25, got {catA['mean']}"
+    assert pytest.approx(catA["std"], abs=1e-3) == 12.5, f"Expected catA std 12.5, got {catA['std']}"
+
+    catB = per_cat["catB"]
+    assert pytest.approx(catB["mean"], abs=1e-3) == 22.5, f"Expected catB mean 22.5, got {catB['mean']}"
+    assert pytest.approx(catB["std"], abs=1e-3) == 5.7446, f"Expected catB std 5.7446, got {catB['std']}"
+
+    # 5. Assert session.pending_figure was set
+    assert session.pending_figure is not None, "Expected session.pending_figure to be set to a matplotlib figure."
+
+    # 6. Confirm text_length column was NOT permanently added to session.dataframe
+    assert "text_length" not in session.dataframe.columns, "'text_length' should not be added to session.dataframe."
